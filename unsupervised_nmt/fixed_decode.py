@@ -1,4 +1,7 @@
-# I hereby declare that I sincerely hope, I won't ever use this code.
+# I hereby declare that I sincerely hope, I won't ever use this code
+#
+# Changes made to the original dynamic_decode is in the fixed_decode method
+# and in its internal condition function..
 
 from __future__ import absolute_import
 from __future__ import division
