@@ -1,39 +1,129 @@
-# import os
-
 import tensorflow as tf
 
-# from .utils import *
-
-# cur_path = os.path.dirname(__file__)
-# data_path = os.path.join(cur_path, '../Data')
-
-
-### lan1 - lan_mapper1                                                                 decoder1  (embeddings) - lan1
-###                     embedder -- (embeddings) -- encoder -- (meaning) -- attention
-### lan2 - lan_mapper2                                                                 decoder2  (embeddings) - lan2
+from .fixed_decode import fixed_decode
+### lan1 - lan1_embedder -- (embeddings)                                     decoder1  (embeddings) - lan1
+###                                       encoder -- (meaning) -- attention
+### lan2 - lan2_embedder -- (embeddings)                                     decoder2  (embeddings) - lan2
 
 
-def language_mapper(input, hparams):
-    # we keep the same number of parameters
-    bottleneck_dim = int(hparams.input_dim * hparams.embedding_dim / 2 / \
-                         (hparams.input_dim + hparams.embedding_dim + 1) + 0.6)
-    output = tf.contrib.layers.fully_connected(input, bottleneck_dim, activation=tf.nn.relu)  # , biases_initializer=None)
-    return output
+class LanguageEncoderDecoder():
+    def __init__(self, hparams):
+        self.hparams = hparams
 
+        self.start_token = self.hparams.embed_size - 3
+        self.end_token = self.hparams.embed_size - 2
+        self.unk_token = self.hparams.embed_size - 1
 
-def embedder(input, hparams):
-    output = tf.contrib.layers.fully_connected(input,
-                                               hparams.embedding_dim,
-                                               activation=tf.nn.softmax,
-                                               biases_initializer=None)
-    return output
+        self.embedding_encoder = None
+        self.embedding_decoder = None
+        self.batch_size = hparams.batch_size
 
+    def embedder(self, _input):
+        self.embedding_encoder = tf.get_variable(self.hparams.embed_name,
+                                            [self.hparams.vocab_size, self.hparams.embed_size])
+        self.embedding_decoder = self.embedding_encoder
 
-def encoder(input, hparams):
-    fw_cell = tf.nn.rnn_cell.GRUCell(num_units=hparams.num_units)
-    bw_cell = tf.nn.rnn_cell.GRUCell(num_units=hparams.num_units)
+        encoder_emb_inp = tf.nn.embedding_lookup(self.embedding_encoder, _input)
+        return encoder_emb_inp
 
-    outputs, _, output_state_bw = tf.contrib.rnn.static_bidirectional_rnn(fw_cell, bw_cell, input, dtype=tf.float32)
-    return outputs, output_state_bw
+    # def language_mapper(self, _input):
+    #     output = tf.contrib.layers.fully_connected(_input, self.hparams.size, activation=tf.nn.relu)
+    #     return output
 
+    def encoder(self, _input, _input_sequence_length):
+        fw_cell = tf.nn.rnn_cell.GRUCell(num_units=self.hparams.num_units)
+        bw_cell = tf.nn.rnn_cell.GRUCell(num_units=self.hparams.num_units)
 
+        outputs, output_states = tf.contrib.rnn.bidirectional_dynamic_rnn(fw_cell,
+                                                                          bw_cell,
+                                                                          _input,
+                                                                          sequence_length=_input_sequence_length)
+        return outputs[1], output_states[1]
+
+    def decoder(self, _input_states, _input_sequence_length, mode, _encoder_inputs=None):
+        def _create_attention_mechanism(_encoder_output_states, _input_sequence_length):
+            # attention_states = tf.transpose(_encoder_output_states, [1, 0, 2])
+
+            attention_mechanism = tf.contrib.seq2seq.LuongAttention(num_units=self.hparams.num_units,
+                                                                    memory=_encoder_output_states,
+                                                                    memory_sequence_length=_input_sequence_length)
+            return attention_mechanism
+
+        def _wrap_decoder_cell(decoder_cell, attention_mechanism):
+            decoder_cell = tf.contrib.seq2seq.AttentionWrapper(decoder_cell,
+                                                               attention_mechanism,
+                                                               attention_layer_size=self.hparams.num_units)
+            return decoder_cell
+
+        decoder_cell = tf.nn.rnn_cell.GRUCell(num_units=self.hparams.num_units)
+        attention_mechanism = _create_attention_mechanism(_input_states, _input_sequence_length)
+
+        decoder_cell = _wrap_decoder_cell(decoder_cell, attention_mechanism)
+
+        if mode == 'denoising' or mode == 'back_translation_main':
+            if _encoder_inputs is None:
+                raise ValueError("Only call 'decoder' in '{}' mode with provided _encoder_inputs.".format(mode))
+            # the _encoder_inputs are the ground truth for denoising
+            helper = tf.contrib.seq2seq.TrainingHelper(_encoder_inputs, _input_sequence_length)
+
+        elif mode == 'back_translation_sec':
+            start_tokens = tf.tile([self.start_token], [self.batch_size])
+            helper = tf.contrib.seq2seq.GreedyEmbeddingHelper(self.embedding_decoder,
+                                                              start_tokens,
+                                                              self.end_token)
+        else:
+            raise ValueError("Only call 'decoder' with mode set to 'denoising', 'back_translation_main' or "
+                             "'back_translation_sec'.")
+
+        decoder = tf.contrib.seq2seq.BasicDecoder(decoder_cell,
+                                                  helper,
+                                                  _input_states)
+        outputs, _ = tf.contrib.seq2seq.dynamic_decode(decoder=decoder,
+                                                       output_time_major=False,
+                                                       impute_finished=True,
+                                                       maximum_iterations=20)
+        return outputs
+
+    def loss(self, _prevent_positional=None, labels=None, logits=None, lan1_meaning=None, lan2_meaning=None):
+        if _prevent_positional is not None:
+            raise  ValueError("Only call 'loss' with named arguments (labels=..., logits=...,)")
+
+        if lan1_meaning is not None != lan2_meaning is not None:
+            raise ValueError("Only call 'loss' with both meanings or neither.")
+
+        cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=logits)
+
+        if lan1_meaning is not None and lan2_meaning is not None:
+            meaning_se = tf.losses.mean_squared_error(lan1_meaning, lan2_meaning)
+        else:
+            meaning_se = tf.zeros(1)
+
+        train_loss = tf.reduce_mean(cross_entropy) + tf.reduce_mean(meaning_se)
+        return train_loss
+
+    def language_encoder(self, _input, _input_sequence_length):
+        _output = self.embedder(_input=_input)
+        # _output = self.language_mapper(_input=_output)
+        _output, _output_states = self.encoder(_input=_output, _input_sequence_length=_input_sequence_length)
+        return _output, _output_states
+
+    def denoising_model(self, _input, _input_sequence_length):
+        '''
+        Denoising_model is used for denoising training, when the decoder has to decode the input provided to the encoder
+        :param _input: An input sequence to be encoded and then decoded, 2dim tensor
+        :param _input_sequence_length: Input sequence length, tensor of dimensions [batch_size]
+        :return:
+        '''
+        _noised_input = _input
+        _output, _output_states = self.language_encoder(_noised_input, _input_sequence_length)
+        _output = self.decoder(_input_states=_output_states,
+                               _input_sequence_length=_input_sequence_length,
+                               mode='denoising',
+                               _encoder_inputs=_input)
+        return _output
+
+    def language_decoder(self, _input_states, _input_sequence_length, mode=None, _encoder_inputs=None):
+        _output = self.decoder(_input_states=_input_states,
+                               _input_sequence_length=_input_sequence_length,
+                               mode=mode,
+                               _encoder_inputs=_encoder_inputs)
