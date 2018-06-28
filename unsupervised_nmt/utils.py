@@ -39,3 +39,4 @@ def embedding2word(embedding_vec, embedding_matrix, vocabulary):
     cosines = np.dot(embedding_vec, embedding_matrix.transpose())
     idx = np.argmax(cosines)
     return vocabulary.items()[idx]
+
