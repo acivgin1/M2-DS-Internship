@@ -23,9 +23,13 @@ class LanguageEncoderDecoder():
         self.embedding_decoder = None
         self.batch_size = self.hparams.batch_size
 
+        self.fw_cell = tf.nn.rnn_cell.GRUCell(num_units=self.hparams.num_units // 2)
+        self.bw_cell = tf.nn.rnn_cell.GRUCell(num_units=self.hparams.num_units // 2)
+
     def embedder(self, _input):
-        self.embedding_encoder = tf.get_variable(self.hparams.embed_name,
-                                                 [self.hparams.vocab_size, self.hparams.embed_size])
+        with tf.variable_scope('embedder', reuse=tf.AUTO_REUSE):
+            self.embedding_encoder = tf.get_variable(self.hparams.embed_name,
+                                                     [self.hparams.vocab_size, self.hparams.embed_size])
 
         # we share the same encoder and decoder for sentences
         self.embedding_decoder = self.embedding_encoder
@@ -39,18 +43,16 @@ class LanguageEncoderDecoder():
 
     def encoder(self, _input, _input_sequence_length):
         if self.lan_encoder_decoder is None:
-            fw_cell = tf.nn.rnn_cell.GRUCell(num_units=self.hparams.num_units//2)
-            bw_cell = tf.nn.rnn_cell.GRUCell(num_units=self.hparams.num_units//2)
-
-            outputs, output_states = tf.nn.bidirectional_dynamic_rnn(fw_cell,
-                                                                     bw_cell,
-                                                                     _input,
-                                                                     # sequence_length=_input_sequence_length,
-                                                                     dtype=tf.float32)
+            with tf.variable_scope('encoder_cells', reuse=tf.AUTO_REUSE):
+                outputs, output_states = tf.nn.bidirectional_dynamic_rnn(self.fw_cell,
+                                                                         self.bw_cell,
+                                                                         _input,
+                                                                         sequence_length=_input_sequence_length,
+                                                                         dtype=tf.float32)
         else:
             outputs, output_states = self.lan_encoder_decoder.encoder(_input, _input_sequence_length)
 
-        return outputs[1], output_states[1]
+        return tf.concat(outputs, axis=2), tf.concat(output_states, axis=1)
 
     def decoder(self, _input_states, _input_sequence_length, mode, _encoder_inputs=None):
         ### internal functions start
@@ -75,17 +77,17 @@ class LanguageEncoderDecoder():
 
         decoder_cell = _wrap_decoder_cell(decoder_cell, attention_mechanism, self.hparams)
         decoder_initial_state = decoder_cell.zero_state(self.batch_size, dtype=tf.float32).clone(
-            cell_state=_input_states)
+            cell_state=_input_states[:,-1,:])
 
-        if mode == 'denoising' or mode == 'back_translation_main':
+        if mode == 'denoising' or mode == 'backtranslation_main':
             if _encoder_inputs is None:
                 raise ValueError("Only call 'decoder' in '{}' mode with provided _encoder_inputs.".format(mode))
             # the _encoder_inputs are the ground truth for denoising and for the main language model
             helper = tf.contrib.seq2seq.TrainingHelper(_encoder_inputs, _input_sequence_length)
 
-        elif mode == 'back_translation_sec':
+        elif mode == 'backtranslation_sec':
             # secondary decoder should behave freely so we treat it as if its in inference mode
-            start_tokens = tf.fill([self.batch_size], [self.start_token])
+            start_tokens = tf.fill([self.batch_size], self.start_token)
             helper = tf.contrib.seq2seq.GreedyEmbeddingHelper(self.embedding_decoder,
                                                               start_tokens,
                                                               self.end_token)
@@ -96,11 +98,11 @@ class LanguageEncoderDecoder():
         decoder = tf.contrib.seq2seq.BasicDecoder(decoder_cell,
                                                   helper,
                                                   decoder_initial_state)
-        outputs, _ = tf.contrib.seq2seq.dynamic_decode(decoder=decoder,
-                                                       output_time_major=False,
-                                                       # impute_finished=True,
-                                                       maximum_iterations=self.hparams.max_out_length)
-        return outputs
+        outputs, _, output_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(decoder=decoder,
+                                                                                output_time_major=False,
+                                                                                impute_finished=True,
+                                                                                maximum_iterations=self.hparams.max_out_length)
+        return outputs, output_sequence_lengths
 
     def loss(self, _prevent_positional=None, labels=None, logits=None, lan1_meaning=None, lan2_meaning=None):
         if _prevent_positional is not None:
@@ -133,18 +135,30 @@ class LanguageEncoderDecoder():
         _noised_embedded_input = _embedded_input
         _output, _output_state = self.encoder(_input=_noised_embedded_input, _input_sequence_length=_input_sequence_length)
 
-        _output = self.decoder(_input_states=_output,
-                               _input_sequence_length=_input_sequence_length,
-                               mode='denoising',
-                               _encoder_inputs=_embedded_input)
+        _output, _ = self.decoder(_input_states=_output,
+                                  _input_sequence_length=_input_sequence_length,
+                                  mode='denoising',
+                                  _encoder_inputs=_embedded_input)
         return _output
 
-    # def language_decoder(self, _input_states, _input_sequence_length, mode=None, _encoder_inputs=None):
-    #     _output = self.decoder(_input_states=_input_states,
-    #                            _input_sequence_length=_input_sequence_length,
-    #                            mode=mode,
-    #                            _encoder_inputs=_encoder_inputs)
-    #     return _output
+    def backtranslation_model(self, _input, _input_sequence_length, lan_enc_dec):
+        _embedded_input = self.embedder(_input=_input)
+        # lan_enc_dec =
+        _output, _output_state = self.encoder(_input=_embedded_input, _input_sequence_length=_input_sequence_length)
+
+        _output, _output_sequence_lengths = lan_enc_dec.decoder(_input_states=_output,
+                                                                _input_sequence_length=_input_sequence_length,
+                                                                mode='backtranslation_sec')
+
+        _embedded_input = self.embedder(_input=_output[1])
+
+        _output, _output_state = lan_enc_dec.encoder(_input=_embedded_input, _input_sequence_length=_output_sequence_lengths)
+
+        _output, _ = self.decoder(_input_states=_output,
+                                  _input_sequence_length=_output_sequence_lengths,
+                                  mode='backtranslation_main',
+                                  _encoder_inputs=_embedded_input)
+        return _output
 
 
 def create_train_model(hparams1, hparams2):
@@ -153,19 +167,37 @@ def create_train_model(hparams1, hparams2):
 
 
 if __name__ == '__main__':
-    hparams = tf.contrib.training.HParams(
+    hparams1 = tf.contrib.training.HParams(
         embed_size=300,
-        batch_size=2,
+        batch_size=3,
         embed_name='embedder1',
         vocab_size=2000,
-        num_units=20,
-        max_out_length=30)
+        num_units=200,
+        max_out_length=10)
 
-    lan1_enc_dec = LanguageEncoderDecoder(hparams)
-    _input = tf.placeholder(tf.int32, shape=(2, 10))
-    _input_sequence_length = tf.constant([10, 10], dtype=tf.int32, shape=[2])
-    output = lan1_enc_dec.denoising_model(_input=_input, _input_sequence_length=_input_sequence_length)
+    hparams2 = tf.contrib.training.HParams(
+        embed_size=300,
+        batch_size=3,
+        embed_name='embedder2',
+        vocab_size=2000,
+        num_units=200,
+        max_out_length=10)
+
+    lan1_enc_dec = LanguageEncoderDecoder(hparams1)
+
+    lan2_enc_dec = LanguageEncoderDecoder(hparams2, lan1_enc_dec)
+    _input = tf.placeholder(tf.int32, shape=(hparams1.batch_size, 10))
+    _input_sequence_length = tf.constant([10, 8, 7], dtype=tf.int32, shape=[3])
+
+    output_1 = lan1_enc_dec.denoising_model(_input=_input, _input_sequence_length=_input_sequence_length)
+    output_2 = lan2_enc_dec.denoising_model(_input=_input, _input_sequence_length=_input_sequence_length)
+
+    output = lan1_enc_dec.backtranslation_model(_input, _input_sequence_length, lan2_enc_dec)
+
     with tf.Session() as sess:
+        tf.global_variables_initializer().run()
         writer = tf.summary.FileWriter("output", sess.graph)
-        print(sess.run(output))
+        print(sess.run([output_1, output_2, output], feed_dict={_input: [[1, 2, 3, 4, 5, 6, 7, 8, 9, 1],
+                                                                         [3, 4, 7, 5, 6, 1, 2, 5, 8, 10],
+                                                                         [3, 4, 7, 5, 6, 1, 2, 5, 8, 10]]}))
         writer.close()
