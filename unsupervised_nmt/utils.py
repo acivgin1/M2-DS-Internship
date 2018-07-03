@@ -23,20 +23,11 @@ def list2dict(vocabulary):
         vocabulary[val] = idx
     return vocabulary
 
+def wordlist2ids(wordlist, vocabulary):
+    return [vocabulary[x] if x in vocabulary else len(vocabulary) for x in wordlist]
 
-def word2onehot(word, vocabulary, eos=False):
-    idx = vocabulary[word] if word in vocabulary else len(vocabulary)
-    one_hot = np.zeros((len(vocabulary) + 2, 1))  # 2 is for UNK and EOS tokens
-    idx = idx if not eos else one_hot.shape[0] - 1
-    one_hot[idx] = 1
-    return one_hot
-
-
-def embedding2word(embedding_vec, embedding_matrix, vocabulary):
-    # not sure if need to norm the vectors, but just in case here is the code
-    embedding_vec = embedding_vec / np.linalg.norm(embedding_vec)
-    embedding_matrix = embedding_matrix / np.linalg.norm(embedding_matrix, axis=1).reshape((-1, 1))
-    cosines = np.dot(embedding_vec, embedding_matrix.transpose())
-    idx = np.argmax(cosines)
-    return vocabulary.items()[idx]
-
+def sentences2ids(sentences, vocabulary):
+    id_sents = []
+    for sents in sentences:
+        id_sents.append(wordlist2ids(sents, vocabulary))
+    return id_sents
