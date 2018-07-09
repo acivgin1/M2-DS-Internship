@@ -31,6 +31,15 @@ def wordlist2ids(wordlist, vocabulary):
     return wordlist
 
 
+def ids2wordlist(idslist, vocabulary):
+    sent = []
+    vocabulary = {v: k for k, v in vocabulary.items()}
+    for ids in idslist:
+        if ids in vocabulary:
+            sent.append(vocabulary[ids])
+    return sent
+
+
 def sentences2ids(sentences, vocabulary):
     for idx, sents in enumerate(sentences):
         sentences[idx] = wordlist2ids(sents, vocabulary)

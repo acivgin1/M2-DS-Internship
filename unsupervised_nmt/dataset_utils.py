@@ -45,7 +45,7 @@ def pad_sentence(id_list, vocabulary, sent_len):
     return id_list + pads
 
 
-text_filename = f'{train_file_path}/{LANS[1]}.txt'
+text_filename = f'{test_file_path}/{LANS[0]}.txt'
 
 with open(text_filename, 'r') as first_lan:
     vocab = None
@@ -71,7 +71,7 @@ vocab = utils.create_vocabulary([], vocab)
 
 print(len(vocab))
 print(vocab[-5:])
-vocab = utils.remove_infrequents(vocab, threshold=15)
+vocab = utils.remove_infrequents(vocab, threshold=5)
 print(len(vocab))
 vocab = utils.list2dict(vocab)
 
@@ -87,7 +87,7 @@ for idx, sents in enumerate(all_sentences):
         continue
     all_sentences[idx] = pad_sentence(add_start_end_token(sents, vocab), vocab, 50)
 
-with open(f'{train_file_path}/{LANS[1]}_vocab.json', 'w') as fp:
+with open(f'{test_file_path}/{LANS[0]}_vocab.json', 'w') as fp:
     json.dump(vocab, fp)
     del vocab
 
@@ -96,6 +96,4 @@ del all_sentences
 
 print(test)
 print(sents.shape)
-np.save(f'{train_file_path}/{LANS[1]}_sents.npy', sents)
-
-
+np.save(f'{test_file_path}/{LANS[0]}_sents.npy', sents)
