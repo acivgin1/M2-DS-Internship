@@ -3,17 +3,21 @@ import operator
 import numpy as np
 
 
-def create_vocabulary(book, vocab=None):
+def create_vocabulary(book, vocab=None, sorted_vocab=True):
     if vocab is None:
         vocabulary = {}
     else:
-        vocabulary = dict(vocab)
+        vocabulary = vocab
+
     for word in book:
         vocabulary[word] = vocabulary[word] + 1 if word in vocabulary else 1
-    return sorted(vocabulary.items(), key=operator.itemgetter(1), reverse=True)
 
+    if sorted_vocab:
+        return sorted(vocabulary.items(), key=operator.itemgetter(1), reverse=True)
+    else:
+        return vocabulary
 
-def remove_infrequents(vocabulary, threshold=5):
+def remove_infrequents(vocabulary, threshold):
     threshold_idx = [idx for (idx, val) in enumerate(vocabulary) if val[1] <= threshold][0]
     return vocabulary[:threshold_idx]
 
