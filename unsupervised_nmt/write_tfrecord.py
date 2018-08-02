@@ -14,14 +14,18 @@ def _int64_feature(value):
 
 
 def write_all_data(data_path):
-    def get_data(data_path, name):
-        sents = np.load(f'{data_path}/{name}_sents.npz')
+    def get_data(npz_filename):
+        sents = np.load(npz_filename)
+
         lan_sents = sents['sentences'].astype(np.int32)
         lan_sent_lenghts = sents['lengths'].astype(np.int32)
+
+        print(lan_sents.shape)
+        print(lan_sent_lenghts.shape)
+
         return lan_sents, lan_sent_lenghts
 
-    def create_tfrecord(data_path, short_name, lan_sents, lan_sent_lengths):
-        tfrecords_filename = f'{data_path}/{short_name}_sentences.tfrecords'
+    def create_tfrecord(tfrecords_filename, lan_sents, lan_sent_lengths):
         writer = tf.python_io.TFRecordWriter(tfrecords_filename)
 
         for idx in tqdm(range(lan_sent_lenghts.size)):
@@ -32,16 +36,21 @@ def write_all_data(data_path):
 
         writer.close()
 
-    names = ['test_output/deen_en', 'test_output/deen_de', 'train_output/deen_en', 'train_output/deen_de']
-    short_names = ['test_en', 'test_de', 'train_en', 'train_de']
+    names = [('test', 'en'), ('test', 'de'), ('train', 'en'), ('train', 'de')]
+    for name in names:
+        npz_filename = f'{data_path}/dataset_utils/{name[0]}_sents_{name[1]}.npz'
+        tfrecords_filename = f'{data_path}/{name[0]}_{name[1]}.tfrecords'
 
-    for name, s_name in zip(names, short_names):
-        lan_sents, lan_sent_lenghts = get_data(data_path, name)
-        create_tfrecord(data_path, s_name, lan_sents, lan_sent_lenghts)
+        if os.path.isfile(tfrecords_filename):
+            print(f'{tfrecords_filename} already exists.')
+            continue
+
+        lan_sents, lan_sent_lenghts = get_data(npz_filename)
+        create_tfrecord(tfrecords_filename, lan_sents, lan_sent_lenghts)
 
 
 def read_tfrecord(data_path):
-    tfrecords_filename = f'{data_path}/test_en_sentences.tfrecords'
+    tfrecords_filename = f'{data_path}/train_en.tfrecords'
 
     with tf.Session() as sess:
         feature = {'sentence': tf.FixedLenFeature([], tf.string),
@@ -55,7 +64,7 @@ def read_tfrecord(data_path):
         features = tf.parse_single_example(serialized_example, features=feature)
 
         sentence = tf.decode_raw(features['sentence'], tf.int32)
-        sentence = tf.reshape(sentence, [50])
+        sentence = tf.reshape(sentence, [40])
 
         s_length = tf.cast(features['length'], tf.int32)
 
@@ -63,7 +72,7 @@ def read_tfrecord(data_path):
                                                     batch_size=10,
                                                     capacity=30,
                                                     num_threads=1,
-                                                    min_after_dequeue=10)
+                                                    min_after_dequeue=20)
 
         init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
         sess.run(init_op)
@@ -82,5 +91,5 @@ def read_tfrecord(data_path):
 if __name__ == '__main__':
     cur_path = os.path.dirname(__file__)
     data_path = os.path.relpath('../Data', cur_path)
-    # write_all_data(data_path)
+    write_all_data(data_path)
     read_tfrecord(data_path)
