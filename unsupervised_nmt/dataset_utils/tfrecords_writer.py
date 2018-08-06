@@ -90,6 +90,6 @@ def read_tfrecord(data_path):
 
 if __name__ == '__main__':
     cur_path = os.path.dirname(__file__)
-    data_path = os.path.relpath('../Data', cur_path)
+    data_path = os.path.realpath(os.path.join(cur_path, '../../Data'))
     write_all_data(data_path)
-    read_tfrecord(data_path)
+    # read_tfrecord(data_path)
