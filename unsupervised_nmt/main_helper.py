@@ -104,7 +104,7 @@ def get_data(data_path, name, hparams):
         features = tf.parse_single_example(serialized_example, features=feature)
 
         sentence = tf.decode_raw(features['sentence'], tf.int32)
-        sentence = tf.reshape(sentence, [40])
+        sentence = tf.reshape(sentence, [hparams.max_out_length])
 
         s_length = tf.cast(features['length'], tf.int32)
 

@@ -23,7 +23,7 @@ def write_all_data(data_path):
         print(lan_sents.shape)
         print(lan_sent_lenghts.shape)
 
-        return lan_sents, lan_sent_lenghts
+        return lan_sents[:1500000, :], lan_sent_lenghts[:1500000]
 
     def create_tfrecord(tfrecords_filename, lan_sents, lan_sent_lengths):
         writer = tf.python_io.TFRecordWriter(tfrecords_filename)
@@ -37,9 +37,9 @@ def write_all_data(data_path):
         writer.close()
 
     names = [('test', 'en'), ('test', 'de'), ('train', 'en'), ('train', 'de')]
-    for name in names:
+    for name in names[2:]:
         npz_filename = f'{data_path}/dataset_utils/{name[0]}_sents_{name[1]}.npz'
-        tfrecords_filename = f'{data_path}/{name[0]}_{name[1]}.tfrecords'
+        tfrecords_filename = f'{data_path}/{name[0]}_{name[1]}1M5.tfrecords'
 
         if os.path.isfile(tfrecords_filename):
             print(f'{tfrecords_filename} already exists.')

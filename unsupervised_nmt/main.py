@@ -25,34 +25,40 @@ def get_hparams(vocab1, vocab2, batch_size, num_epochs, num_of_examples):
     voc2_size = len(vocab2) + 3
 
     hparams1 = tf.contrib.training.HParams(
-        embed_size=300,
+        name='en',
+        # general data
+        num_epochs=num_epochs,
         batch_size=batch_size,
+        num_of_examples=num_of_examples,
         vocab_size=voc1_size,
         num_units=300,
-        max_out_length=30,
+        max_out_length=28,
         dtype=tf.float32,
+        # embedding data
+        embed_size=300,
         pad_token_id=np.array(voc1_size - 1, dtype=np.int32),
         end_token_id=np.array(voc1_size - 1, dtype=np.int32),
         sts_token_id=np.array(voc1_size - 2, dtype=np.int32),
-        unk_token_id=np.array(voc1_size - 3, dtype=np.int32),
-        name='en',
-        num_epochs=num_epochs,
-        num_of_examples=num_of_examples)
+        unk_token_id=np.array(voc1_size - 3, dtype=np.int32)
+        )
 
     hparams2 = tf.contrib.training.HParams(
-        embed_size=hparams1.embed_size,
+        name='de',
+        # general data
+        num_epochs=num_epochs,
         batch_size=hparams1.batch_size,
+        num_of_examples=num_of_examples
         vocab_size=voc2_size,
         num_units=hparams1.num_units,
         max_out_length=hparams1.max_out_length,
         dtype=hparams1.dtype,
+        # embedding data
+        embed_size=hparams1.embed_size,
         pad_token_id=np.array(voc2_size - 1, dtype=np.int32),
         end_token_id=np.array(voc2_size - 1, dtype=np.int32),
         sts_token_id=np.array(voc2_size - 2, dtype=np.int32),
-        unk_token_id=np.array(voc2_size - 3, dtype=np.int32),
-        name='de',
-        num_epochs=num_epochs,
-        num_of_examples=num_of_examples)
+        unk_token_id=np.array(voc2_size - 3, dtype=np.int32)
+        )
     
     return hparams1, hparams2
 
@@ -91,38 +97,12 @@ def main(data_path, logs_path, batch_size, num_epochs, num_of_examples):
         else:
             saver = tf.train.Saver()
             tf.global_variables_initializer().run()
-            print('Model created.')
-                  
+            print('Model created.')        
         tf.local_variables_initializer().run()
-
-        all_vars = tf.trainable_variables()
-        [tf.summary.histogram(f'{var.name.split(":")[0]}_hist', var) for var in all_vars]
-
-        tf.summary.scalar('loss_den1', den1.loss, family='1losses')
-        tf.summary.scalar('loss_den2', den2.loss, family='1losses')
-        tf.summary.scalar('loss_back1', back1.loss, family='1losses')
-        tf.summary.scalar('loss_back2', back2.loss, family='1losses')
-        
-        tf.summary.scalar('samp_prob', sampling_probability)
         
         coord = tf.train.Coordinator()
         threads = tf.train.start_queue_runners(coord=coord)
-        
-        merged = tf.summary.merge_all()
-        writer = tf.summary.FileWriter(logs_path, sess.graph)
-        
-        config = projector.ProjectorConfig()
-        embedding1 = config.embeddings.add()
-        embedding1.tensor_name = den1.model.embedding_encoder.name
-        embedding1.metadata_path = f'{logs_path}/en.tsv'
-        
-        embedding2 = config.embeddings.add()
-        embedding2.tensor_name = den2.model.embedding_encoder.name
-        embedding2.metadata_path = f'{logs_path}/de.tsv'
-        
-        projector.visualize_embeddings(writer, config)
-        
-        
+              
         num_of_iterations = (num1 // (hparams1.batch_size * 2))
         alfa = 0.8
         
@@ -134,39 +114,19 @@ def main(data_path, logs_path, batch_size, num_epochs, num_of_examples):
                 start_time = time.time()
                 print(f'Running ep{epoch}/{num_epochs}-', end='')
                 print(f'b{batch_num}/{num_of_iterations}-L1: ', end='')
-                
-                if False and batch_num % 2 == 0:
-                    ress = tuple(sess.run([den1.loss, den2.loss,
-                                           den1.train_op, den2.train_op,
-                                           write_step, merged], feed_dict={sampling_probability: inv_samp_prob}))
 
-                    writer.add_summary(summary=ress[-1], global_step=ress[-2])
-                    write_step = write_step + 1
-                else:
-                      ress = tuple(sess.run([back1.loss, back1.train_op,
-                                             global_step],
-                                            feed_dict={sampling_probability: inv_samp_prob}))
+                ress = tuple(sess.run([back1.loss, back1.train_op, global_step],
+                                      feed_dict={sampling_probability: inv_samp_prob}))
                 
-                print(f'{time.time()-start_time:.2f}s: {ress[0]:.2f}', end=' ') # , {ress[1]:.4f}', end=' ')
+                print(f'{time.time() - start_time:.2f}s: {ress[0]:.2f}', end=' ') # , {ress[1]:.4f}', end=' ')
                 start_time = time.time()
                 
                 print('L2: ', end='')
-                if False and batch_num % 2 == 0 and batch_num != 0:
-                    ress = tuple(sess.run([back1.loss, back2.loss,
-                                           back1.train_op, back2.train_op,
-                                           write_step, merged], feed_dict={sampling_probability: inv_samp_prob}))
-                    
-                    writer.add_summary(summary=ress[-1], global_step=ress[-2])
-                    write_step = write_step + 1
-                else:
-                    ress = tuple(sess.run([back2.loss, back2.train_op,
-                                           global_step],
-                                          feed_dict={sampling_probability: inv_samp_prob}))
-                
-                print(f'{time.time()-start_time:.2f}s: {ress[0]:.2f}') #  {ress[1]:.4f}')
+                ress = tuple(sess.run([back2.loss, back2.train_op, global_step],
+                                      feed_dict={sampling_probability: inv_samp_prob}))
+                print(f'{time.time() - start_time:.2f}s: {ress[0]:.2f}') #  {ress[1]:.4f}')
                 
                 if batch_num % 100 == 0 and batch_num != 0:
-                    # because epoch lasts for so long time, we need to save more often.
                     save_path = saver.save(sess, f'{logs_path}/nmt_model_epoch_current.ckpt')
                     print('Model saved in path: %s' % save_path)
                 if batch_num % 25 == 0:

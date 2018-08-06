@@ -24,9 +24,10 @@ class LanguageEncoderDecoder():
     def embedder(self, _input):
         if self.embedding_encoder is None:
             with tf.variable_scope(f'{self.name}_embedder/', reuse=tf.AUTO_REUSE):
-                self.embedding_encoder = tf.get_variable(f'{self.name}_acc_embedder/',
-                                                         [self.hparams.vocab_size, self.hparams.embed_size],
-                                                         dtype=self.hparams.dtype)
+                with tf.device('/cpu:0'):
+                    self.embedding_encoder = tf.get_variable(f'{self.name}_acc_embedder/',
+                                                             [self.hparams.vocab_size, self.hparams.embed_size],
+                                                             dtype=self.hparams.dtype)
             self.embedding_decoder = self.embedding_encoder
 
         encoder_emb_inp = tf.nn.embedding_lookup(self.embedding_encoder, _input)
@@ -191,13 +192,14 @@ class LanguageEncoderDecoder():
                 last_outputs = tf.boolean_mask(_outputs, mask)
                 lan1_meaning = tf.concat((last_outputs, _output_state), axis=0)
 
+            # second language begin
             _outputs, _output_sequence_length = lan_enc_dec.decoder(_input_states=_outputs,
                                                                     _input_sequence_length=_input_sequence_length,
                                                                     _last_state=_output_state,
                                                                     mode='backtranslation_sec')
 
             paddings = tf.constant([[0, 0], [1, 0]])
-            _padded_output = tf.pad(_outputs[1][:, :-1], paddings, 'CONSTANT', constant_values=self.sts_token)
+            _padded_output = tf.pad(_outputs[1][:, :-1], paddings, 'CONSTANT', constant_values=lan_enc_dec.sts_token)
 
             _embedded_input = lan_enc_dec.embedder(_input=_padded_output)
 
@@ -209,6 +211,7 @@ class LanguageEncoderDecoder():
                 mask = tf.one_hot(_output_sequence_length - 1, depth=tf.shape(_outputs)[1], dtype=tf.bool, on_value=True, off_value=False)
                 last_outputs = tf.boolean_mask(_outputs, mask)
                 lan2_meaning = tf.concat((last_outputs, _output_state), axis=0)
+            # second language end
 
             _outputs, _ = self.decoder(_input_states=_outputs,
                                        _input_sequence_length=_output_sequence_length,
